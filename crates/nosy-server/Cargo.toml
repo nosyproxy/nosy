@@ -1,0 +1,45 @@
+[package]
+name = "nosy-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Nosy: HTTP/HTTPS intercepting proxy with a web UI"
+
+[[bin]]
+name = "nosy"
+path = "src/main.rs"
+
+[dependencies]
+nosy-model.workspace = true
+nosy-ca.workspace = true
+nosy-proxy.workspace = true
+nosy-store.workspace = true
+nosy-repeater.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+axum.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+httparse.workspace = true
+nosy-codec.workspace = true
+memchr.workspace = true
+rust-embed.workspace = true
+mime_guess.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+mimalloc.workspace = true
+anyhow.workspace = true
+directories.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process"] }
+flate2.workspace = true
+tempfile.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+
+[lints]
+workspace = true

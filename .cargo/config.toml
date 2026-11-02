@@ -1,0 +1,6 @@
+[env]
+# Built SPA embedded into the binary (read from disk in debug builds).
+# Defaults to the sibling nosy-web checkout; override with NOSY_UI_DIR=/path/to/dist.
+NOSY_UI_DIR = { value = "../nosy-web/dist", relative = true }
+# ts-rs output; nosy-web's `make types` points this at its src/api/generated.
+TS_RS_EXPORT_DIR = { value = "target/ts-bindings", relative = true }
