@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -27,9 +25,13 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
-  clippy:
-    name: clippy
-    runs-on: ubuntu-latest
+  check:
+    name: clippy + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -37,24 +39,19 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-  test:
-    name: test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
 
   # The real single binary: nosy-web main built and embedded via NOSY_UI_DIR.
   bundle:
-    name: binary with embedded UI
-    runs-on: ubuntu-latest
+    name: binary with embedded UI (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
@@ -72,7 +69,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: nosy
-      - run: make -C nosy build
+      - name: Build UI
+        working-directory: nosy-web
+        run: |
+          npm ci
+          npm run build
+      - name: Build binary
+        working-directory: nosy
+        run: cargo build --release --locked --bin nosy
+        env:
+          NOSY_UI_DIR: ${{ github.workspace }}/nosy-web/dist
       - name: Smoke test
         working-directory: nosy
         run: |
@@ -86,6 +92,6 @@ jobs:
           kill %1
       - uses: actions/upload-artifact@v7
         with:
-          name: nosy-linux-x86_64
-          path: nosy/target/release/nosy
+          name: nosy-${{ runner.os }}
+          path: nosy/target/release/nosy${{ runner.os == 'Windows' && '.exe' || '' }}
           retention-days: 7
