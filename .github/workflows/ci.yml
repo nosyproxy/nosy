@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  # The real single binary: nosy-web main built and embedded via NOSY_UI_DIR.
+  bundle:
+    name: binary with embedded UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: nosy
+      - uses: actions/checkout@v7
+        with:
+          repository: nosyproxy/nosy-web
+          path: nosy-web
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: nosy-web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nosy
+      - run: make -C nosy build
+      - name: Smoke test
+        working-directory: nosy
+        run: |
+          ./target/release/nosy --version
+          ./target/release/nosy --proxy 127.0.0.1:18080 --ui 127.0.0.1:11337 --data-dir "$RUNNER_TEMP/nosy" &
+          for i in $(seq 1 50); do curl -sf http://127.0.0.1:11337/ -o /dev/null && break; sleep 0.2; done
+          ui=$(curl -sf http://127.0.0.1:11337/)
+          landing=$(curl -sf -x http://127.0.0.1:18080 http://nosy/)
+          [[ "$ui" == *'<title>Nosy</title>'* ]] || { echo "::error::UI not embedded"; exit 1; }
+          [[ "$landing" == *'<h1>Nosy</h1>'* ]] || { echo "::error::proxy landing page missing"; exit 1; }
+          kill %1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nosy-linux-x86_64
+          path: nosy/target/release/nosy
+          retention-days: 7
