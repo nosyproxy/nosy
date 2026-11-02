@@ -1,0 +1,27 @@
+[package]
+name = "nosy-repeater"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nosy-model.workspace = true
+nosy-proxy.workspace = true
+tokio.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+httparse.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rcgen.workspace = true
+hyper-util = { workspace = true, features = ["server"] }
+
+[lints]
+workspace = true

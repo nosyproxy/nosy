@@ -1,0 +1,19 @@
+[package]
+name = "nosy-ca"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rcgen.workspace = true
+rustls.workspace = true
+quick_cache.workspace = true
+time.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
