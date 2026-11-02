@@ -1,0 +1,2 @@
+# LF everywhere, including Windows checkouts (rustfmt/prettier checks in CI).
+* text=auto eol=lf
