@@ -79,7 +79,8 @@ highlights and notes show up in the history instantly.
 ## Contracts with the other repos
 
 - **UI**: `nosy-server` embeds the directory in `NOSY_UI_DIR` with rust-embed (default
-  `../nosy-web/dist`, see `.cargo/config.toml`; debug builds read it from disk).
+  `../nosy-web/dist`, see `.cargo/config.toml`; debug builds read it from disk). CI and releases
+  build the nosy-web commit pinned in `.github/nosy-web.ref`; update it to ship a new UI.
 - **Types**: everything crossing the API is in `nosy-model` and derives `ts_rs::TS`. After changing
   it, run `make types` in `nosy-web` and commit the regenerated `src/api/generated` there.
   (`cargo test` here writes the bindings to `target/ts-bindings`.)

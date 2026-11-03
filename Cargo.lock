@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "nosy-ca"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "quick_cache",
  "rcgen",
@@ -1296,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "nosy-codec"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "base64 0.23.1",
  "brotli",
@@ -1312,7 +1312,7 @@ dependencies = [
 
 [[package]]
 name = "nosy-model"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "http",
@@ -1322,7 +1322,7 @@ dependencies = [
 
 [[package]]
 name = "nosy-proxy"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1349,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "nosy-repeater"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "http",
@@ -1369,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "nosy-server"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "nosy-store"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "crossbeam-channel",
