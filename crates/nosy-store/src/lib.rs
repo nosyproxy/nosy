@@ -38,6 +38,8 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("not found")]
     NotFound,
+    #[error("store is closed")]
+    Closed,
 }
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
@@ -169,27 +171,24 @@ impl Store {
     }
 
     pub fn delete_flows(&self, ids: &[FlowId]) -> Result<usize> {
-        let n = self.with_conn(|c| -> rusqlite::Result<usize> {
-            let tx = c.transaction()?;
-            let mut n = 0;
-            {
-                let mut stmt = tx.prepare_cached("DELETE FROM flows WHERE id = ?1")?;
-                for id in ids {
-                    n += stmt.execute([id])?;
-                }
-            }
-            tx.commit()?;
-            Ok(n)
-        })?;
+        let n = self.delete(Some(ids.to_vec()))?;
         let _ = self.events.send(WsEvent::Deleted { ids: ids.to_vec() });
         Ok(n)
     }
 
     pub fn clear_flows(&self) -> Result<()> {
-        self.flush();
-        self.with_conn(|c| c.execute_batch("DELETE FROM flow_data; DELETE FROM flows;"))?;
+        self.delete(None)?;
         let _ = self.events.send(WsEvent::Cleared);
         Ok(())
+    }
+
+    /// Runs on the writer thread, after everything submitted so far is committed.
+    fn delete(&self, ids: Option<Vec<FlowId>>) -> Result<usize> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.tx
+            .send(writer::Msg::Delete(ids, tx))
+            .map_err(|_| StoreError::Closed)?;
+        Ok(rx.recv().map_err(|_| StoreError::Closed)??)
     }
 
     // ------------------------------------------------------------ repeater
@@ -534,5 +533,36 @@ mod tests {
         assert_eq!(store.list_flows(&FlowFilter::default()).unwrap().len(), 1);
         store.clear_flows().unwrap();
         assert!(store.list_flows(&FlowFilter::default()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn in_flight_flows_stay_deleted() {
+        let (_d, store) = open();
+        let cleared = req(&store, "a", "/", "GET");
+        let deleted = req(&store, "b", "/", "GET");
+        let kept = req(&store, "c", "/", "GET");
+        store.flush();
+        store.delete_flows(&[deleted]).unwrap();
+        resp(&store, deleted, 200);
+        store.flush();
+        assert_eq!(store.list_flows(&FlowFilter::default()).unwrap().len(), 2);
+
+        store.clear_flows().unwrap();
+        resp(&store, cleared, 200);
+        store.submit(FlowEvent::Error {
+            id: kept,
+            ts_end: 3,
+            duration_us: 1,
+            message: "reset".into(),
+        });
+        store.flush();
+        assert!(store.list_flows(&FlowFilter::default()).unwrap().is_empty());
+
+        let fresh = req(&store, "d", "/", "GET");
+        resp(&store, fresh, 200);
+        store.flush();
+        let flows = store.list_flows(&FlowFilter::default()).unwrap();
+        assert_eq!(flows.len(), 1);
+        assert_eq!(flows[0].host, "d");
     }
 }

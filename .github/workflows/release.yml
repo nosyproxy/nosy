@@ -16,17 +16,36 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          path: nosy
+      - name: Check version
+        id: meta
+        working-directory: nosy
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          fi
+          echo "web_ref=$(cat .github/nosy-web.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
           repository: nosyproxy/nosy-web
+          ref: ${{ steps.meta.outputs.web_ref }}
+          path: nosy-web
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run build
+          cache-dependency-path: nosy-web/package-lock.json
+      - name: Build UI
+        working-directory: nosy-web
+        run: |
+          npm ci
+          npm run build
       - uses: actions/upload-artifact@v7
         with:
           name: ui-dist
-          path: dist
+          path: nosy-web/dist
 
   build:
     needs: ui

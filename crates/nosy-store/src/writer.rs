@@ -3,10 +3,13 @@
 //! No artificial delay: after the first event arrives, everything already queued
 //! is drained and committed in one transaction. Under load, batches grow
 //! naturally while the previous commit is in flight.
+//!
+//! Deletes also run here, in order with the capture events, so a flow deleted
+//! while still in flight is not resurrected by its late response.
 
 use std::collections::{HashMap, HashSet};
 
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, Sender};
 use nosy_model::{
     FlowId, WsEvent,
     capture::{FlowEvent, RequestRecord, ResponseRecord},
@@ -19,39 +22,79 @@ use crate::{flows::summary_by_id, util::path_ext};
 pub(crate) enum Msg {
     Event(FlowEvent),
     /// Reply once everything sent before this message is committed.
-    Flush(crossbeam_channel::Sender<()>),
+    Flush(Sender<()>),
+    /// Delete these flows (`None`: all of them) and reply with the number of rows removed.
+    Delete(Option<Vec<FlowId>>, Sender<rusqlite::Result<usize>>),
 }
 
 const MAX_BATCH: usize = 1024;
 
+const REQUEST: u8 = 1;
+const END: u8 = 2;
+
+/// Flows whose request or end (response / error) event has not arrived yet, and
+/// those of them that were deleted in the meantime.
+#[derive(Default)]
+struct InFlight {
+    open: HashMap<FlowId, u8>,
+    deleted: HashSet<FlowId>,
+}
+
+impl InFlight {
+    /// Record `ev`; false if its flow was deleted and the event must be dropped.
+    fn admit(&mut self, ev: &FlowEvent) -> bool {
+        let (id, part) = match ev {
+            FlowEvent::Request(r) => (r.id, REQUEST),
+            FlowEvent::Response(r) => (r.id, END),
+            FlowEvent::Error { id, .. } => (*id, END),
+        };
+        let seen = self.open.entry(id).or_default();
+        *seen |= part;
+        let done = *seen == REQUEST | END;
+        if done {
+            self.open.remove(&id);
+        }
+        if !self.deleted.contains(&id) {
+            return true;
+        }
+        if done {
+            self.deleted.remove(&id);
+        }
+        false
+    }
+
+    fn delete(&mut self, ids: Option<&[FlowId]>) {
+        match ids {
+            Some(ids) => self
+                .deleted
+                .extend(ids.iter().filter(|id| self.open.contains_key(id))),
+            None => self.deleted.extend(self.open.keys()),
+        }
+    }
+}
+
 pub(crate) fn run(mut conn: Connection, rx: Receiver<Msg>, events: broadcast::Sender<WsEvent>) {
     let mut batch: Vec<FlowEvent> = Vec::with_capacity(MAX_BATCH);
     let mut waiters = Vec::new();
-    let mut touched: HashSet<FlowId> = HashSet::new();
+    let mut in_flight = InFlight::default();
 
     while let Ok(first) = rx.recv() {
-        push(first, &mut batch, &mut waiters);
-        while batch.len() < MAX_BATCH {
-            match rx.try_recv() {
-                Ok(m) => push(m, &mut batch, &mut waiters),
-                Err(_) => break,
-            }
-        }
-        if !batch.is_empty() {
-            touched.clear();
-            if let Err(e) = commit(&mut conn, &batch, &mut touched) {
-                tracing::error!(error = %e, n = batch.len(), "failed to persist flows");
-            } else if events.receiver_count() > 0 {
-                let flows: Vec<_> = touched
-                    .iter()
-                    .filter_map(|&id| summary_by_id(&conn, id).ok().flatten())
-                    .collect();
-                if !flows.is_empty() {
-                    let _ = events.send(WsEvent::Flows { flows });
+        let mut next = Some(first);
+        while let Some(m) = next.take() {
+            match m {
+                Msg::Event(e) => batch.push(e),
+                Msg::Flush(tx) => waiters.push(tx),
+                Msg::Delete(ids, reply) => {
+                    persist(&mut conn, &mut batch, &mut in_flight, &events);
+                    in_flight.delete(ids.as_deref());
+                    let _ = reply.send(delete(&mut conn, ids.as_deref()));
                 }
             }
-            batch.clear();
+            if batch.len() < MAX_BATCH {
+                next = rx.try_recv().ok();
+            }
         }
+        persist(&mut conn, &mut batch, &mut in_flight, &events);
         for w in waiters.drain(..) {
             let _ = w.send(());
         }
@@ -59,22 +102,60 @@ pub(crate) fn run(mut conn: Connection, rx: Receiver<Msg>, events: broadcast::Se
     tracing::debug!("store writer stopped");
 }
 
-fn push(m: Msg, batch: &mut Vec<FlowEvent>, waiters: &mut Vec<crossbeam_channel::Sender<()>>) {
-    match m {
-        Msg::Event(e) => batch.push(e),
-        Msg::Flush(tx) => waiters.push(tx),
+/// Commit and publish `batch`, leaving it empty.
+fn persist(
+    conn: &mut Connection,
+    batch: &mut Vec<FlowEvent>,
+    in_flight: &mut InFlight,
+    events: &broadcast::Sender<WsEvent>,
+) {
+    let admitted: Vec<&FlowEvent> = batch.iter().filter(|e| in_flight.admit(e)).collect();
+    if !admitted.is_empty() {
+        let mut touched = HashSet::new();
+        if let Err(e) = commit(conn, &admitted, &mut touched) {
+            tracing::error!(error = %e, n = admitted.len(), "failed to persist flows");
+        } else if events.receiver_count() > 0 {
+            let flows: Vec<_> = touched
+                .iter()
+                .filter_map(|&id| summary_by_id(conn, id).ok().flatten())
+                .collect();
+            if !flows.is_empty() {
+                let _ = events.send(WsEvent::Flows { flows });
+            }
+        }
     }
+    batch.clear();
+}
+
+fn delete(conn: &mut Connection, ids: Option<&[FlowId]>) -> rusqlite::Result<usize> {
+    let tx = conn.transaction()?;
+    let n = match ids {
+        Some(ids) => {
+            let mut stmt = tx.prepare_cached("DELETE FROM flows WHERE id = ?1")?;
+            let mut n = 0;
+            for id in ids {
+                n += stmt.execute([id])?;
+            }
+            n
+        }
+        None => {
+            tx.execute("DELETE FROM flow_data", [])?;
+            tx.execute("DELETE FROM flows", [])?
+        }
+    };
+    tx.commit()?;
+    Ok(n)
 }
 
 fn commit(
     conn: &mut Connection,
-    batch: &[FlowEvent],
+    batch: &[&FlowEvent],
     touched: &mut HashSet<FlowId>,
 ) -> rusqlite::Result<()> {
     // Pair up request/response events of the same flow so the common case is a
     // single INSERT per table instead of insert + upsert.
     let mut responses: HashMap<FlowId, &ResponseRecord> = HashMap::new();
-    for ev in batch {
+    for &ev in batch {
         if let FlowEvent::Response(r) = ev {
             responses.insert(r.id, r);
         }
@@ -82,7 +163,7 @@ fn commit(
     let mut merged: HashSet<FlowId> = HashSet::new();
 
     let tx = conn.transaction()?;
-    for ev in batch {
+    for &ev in batch {
         match ev {
             FlowEvent::Request(r) => {
                 match responses.get(&r.id) {
