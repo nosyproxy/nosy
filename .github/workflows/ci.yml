@@ -41,17 +41,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
 
-  # The real single binary: nosy-web main built and embedded via NOSY_UI_DIR.
   bundle:
-    name: binary with embedded UI (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
+    name: binary with embedded UI
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -92,6 +84,6 @@ jobs:
           kill %1
       - uses: actions/upload-artifact@v7
         with:
-          name: nosy-${{ runner.os }}
-          path: nosy/target/release/nosy${{ runner.os == 'Windows' && '.exe' || '' }}
+          name: nosy-linux
+          path: nosy/target/release/nosy
           retention-days: 7
